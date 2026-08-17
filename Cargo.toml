@@ -1,0 +1,37 @@
+[package]
+name = "tauri-plugin-escpos"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Tauri plugin for ESC/POS thermal printers using escpos-rs"
+license = "MIT"
+repository = "https://github.com/FrancoJFerreyra/tauri-plugin-escpos"
+keywords = ["tauri", "plugin", "escpos", "thermal-printer", "pos"]
+links = "tauri-plugin-escpos"
+include = [
+    "/src/**",
+    "/tests/**",
+    "/build.rs",
+    "/permissions/**",
+    "/guest-js/package.json",
+    "/guest-js/dist/index.js",
+    "/guest-js/dist/index.d.ts",
+    "/README.md",
+    "/LICENSE",
+]
+
+[features]
+default = ["tauri-plugin"]
+tauri-plugin = ["dep:tauri"]
+
+[dependencies]
+tauri = { version = "2.0", default-features = false, optional = true }
+escpos = { version = "0.19.0", default-features = false, features = ["std", "barcodes", "codes_2d", "graphics", "usbprint"] }
+serde = { version = "1.0", features = ["derive"] }
+base64 = "0.22"
+
+[build-dependencies]
+tauri-plugin = { version = "2.0", features = ["build"] }
+
+[dev-dependencies]
+serde_json = "1.0"

@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "dist",
+    "strict": true,
+    "target": "ES2022"
+  },
+  "include": [
+    "index.ts"
+  ]
+}

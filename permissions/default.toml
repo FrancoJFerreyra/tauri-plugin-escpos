@@ -1,0 +1,7 @@
+[default]
+description = "Allows listing and testing ESC/POS printers and printing documents."
+permissions = [
+  "allow-print",
+  "allow-list-printers",
+  "allow-test-printer",
+]
