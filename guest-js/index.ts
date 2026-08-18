@@ -59,12 +59,15 @@ export type PrinterInfo = {
   backend: 'windows_usb'
 }
 
-export type ErrorCode =
-  | 'unsupported_platform'
-  | 'printer_not_found'
-  | 'open_failed'
-  | 'invalid_document'
-  | 'print_failed'
+export const ERROR_CODES = {
+  unsupported_platform: 'unsupported_platform',
+  printer_not_found: 'printer_not_found',
+  open_failed: 'open_failed',
+  invalid_document: 'invalid_document',
+  print_failed: 'print_failed',
+} as const
+
+export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
 
 export type EscposError = {
   code: ErrorCode
