@@ -8,10 +8,14 @@ use escpos::{
     },
 };
 
+use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
+
 use crate::models::{
     Align, BarcodeSymbology, Block, CharacterSet, Column, ErrorCode, EscposError, FontSize,
     PrintDocument, PrinterInfo, PrinterTarget, TextStyle,
 };
+use escpos::driver::NetworkDriver;
 
 #[path = "barcode.rs"]
 mod barcode;
@@ -23,50 +27,78 @@ use crate::models::PrinterBackend;
 #[cfg(target_os = "windows")]
 use escpos::driver::WindowsUsbPrintDriver;
 
-#[cfg(target_os = "windows")]
+const DEFAULT_NETWORK_HOST: &str = "127.0.0.1";
+const DEFAULT_NETWORK_PORT: u16 = 9100;
+const NETWORK_OPEN_TIMEOUT: Duration = Duration::from_secs(2);
+const NETWORK_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
+
 pub fn print_document(
     target: &PrinterTarget,
     document: &PrintDocument,
 ) -> Result<(), EscposError> {
     match target {
         PrinterTarget::WindowsUsbByPath { path } => {
-            let driver = WindowsUsbPrintDriver::open(path).map_err(|error| {
-                EscposError::new(
-                    ErrorCode::OpenFailed,
-                    format!("Failed to open Windows USB printer: {error}"),
-                )
-            })?;
-            render_document(driver, document)
+            #[cfg(target_os = "windows")]
+            {
+                let driver = WindowsUsbPrintDriver::open(path).map_err(|error| {
+                    EscposError::new(
+                        ErrorCode::OpenFailed,
+                        format!("Failed to open Windows USB printer: {error}"),
+                    )
+                })?;
+                render_document(driver, document)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = path;
+                Err(unsupported_platform())
+            }
         }
         PrinterTarget::WindowsUsbByVidPid {
             vendor_id,
             product_id,
         } => {
-            let driver = WindowsUsbPrintDriver::open_by_vid_pid(*vendor_id, *product_id)
-                .map_err(|error| {
-                    EscposError::new(
-                        ErrorCode::PrinterNotFound,
-                        format!(
-                            "Windows USB printer {:04x}:{:04x} was not found: {error}",
-                            vendor_id, product_id
-                        ),
-                    )
-                })?;
+            #[cfg(target_os = "windows")]
+            {
+                let driver = WindowsUsbPrintDriver::open_by_vid_pid(*vendor_id, *product_id)
+                    .map_err(|error| {
+                        EscposError::new(
+                            ErrorCode::PrinterNotFound,
+                            format!(
+                                "Windows USB printer {:04x}:{:04x} was not found: {error}",
+                                vendor_id, product_id
+                            ),
+                        )
+                    })?;
+                render_document(driver, document)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (vendor_id, product_id);
+                Err(unsupported_platform())
+            }
+        }
+        PrinterTarget::Network { host, port } => {
+            let timeout = host.parse::<std::net::IpAddr>().ok().map(|_| NETWORK_OPEN_TIMEOUT);
+            let driver = NetworkDriver::open(host, *port, timeout).map_err(|error| {
+                EscposError::new(
+                    ErrorCode::OpenFailed,
+                    format!("Failed to open network printer {host}:{port}: {error}"),
+                )
+            })?;
             render_document(driver, document)
         }
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn print_document(
-    _target: &PrinterTarget,
-    _document: &PrintDocument,
-) -> Result<(), EscposError> {
-    Err(unsupported_platform())
+pub fn list_printers() -> Result<Vec<PrinterInfo>, EscposError> {
+    let mut printers = list_usb_printers()?;
+    printers.extend(list_network_printers());
+    Ok(printers)
 }
 
 #[cfg(target_os = "windows")]
-pub fn list_printers() -> Result<Vec<PrinterInfo>, EscposError> {
+fn list_usb_printers() -> Result<Vec<PrinterInfo>, EscposError> {
     WindowsUsbPrintDriver::list()
         .map_err(|error| {
             EscposError::new(
@@ -83,6 +115,8 @@ pub fn list_printers() -> Result<Vec<PrinterInfo>, EscposError> {
                     name: None,
                     vendor_id: printer.vendor_id,
                     product_id: printer.product_id,
+                    host: None,
+                    port: None,
                     backend: PrinterBackend::WindowsUsb,
                 })
                 .collect()
@@ -90,8 +124,60 @@ pub fn list_printers() -> Result<Vec<PrinterInfo>, EscposError> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn list_printers() -> Result<Vec<PrinterInfo>, EscposError> {
-    Err(unsupported_platform())
+fn list_usb_printers() -> Result<Vec<PrinterInfo>, EscposError> {
+    Ok(Vec::new())
+}
+
+fn list_network_printers() -> Vec<PrinterInfo> {
+    network_endpoints()
+        .into_iter()
+        .map(|(host, port)| PrinterInfo::network(host, port))
+        .collect()
+}
+
+fn network_endpoints() -> Vec<(String, u16)> {
+    let mut endpoints = configured_network_endpoints();
+
+    if !endpoints
+        .iter()
+        .any(|(host, port)| host == DEFAULT_NETWORK_HOST && *port == DEFAULT_NETWORK_PORT)
+        && should_include_default_emulator()
+    {
+        endpoints.push((DEFAULT_NETWORK_HOST.to_string(), DEFAULT_NETWORK_PORT));
+    }
+
+    endpoints
+}
+
+fn configured_network_endpoints() -> Vec<(String, u16)> {
+    std::env::var("ESCPOS_NETWORK_PRINTERS")
+        .ok()
+        .into_iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .filter_map(|part| parse_host_port(part.trim()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn should_include_default_emulator() -> bool {
+    if cfg!(debug_assertions) {
+        return true;
+    }
+
+    let address = SocketAddr::from(([127, 0, 0, 1], DEFAULT_NETWORK_PORT));
+    TcpStream::connect_timeout(&address, NETWORK_PROBE_TIMEOUT).is_ok()
+}
+
+pub(crate) fn parse_host_port(value: &str) -> Option<(String, u16)> {
+    let (host, port) = value.rsplit_once(':')?;
+    if host.is_empty() {
+        return None;
+    }
+    let port = port.parse().ok().filter(|port| *port != 0)?;
+    Some((host.to_string(), port))
 }
 
 pub fn test_printer(target: &PrinterTarget) -> Result<(), EscposError> {
@@ -139,6 +225,22 @@ pub fn test_printer(target: &PrinterTarget) -> Result<(), EscposError> {
         ],
     };
     print_document(target, &document)
+}
+
+pub fn self_test() -> Result<Vec<PrinterInfo>, EscposError> {
+    let printers = list_printers()?;
+    let printer = printers
+        .iter()
+        .find(|printer| matches!(printer.backend, crate::models::PrinterBackend::Network))
+        .or_else(|| printers.first())
+        .ok_or_else(|| {
+            EscposError::new(
+                ErrorCode::PrinterNotFound,
+                "No ESC/POS printer was found. Start a TCP emulator on 127.0.0.1:9100 or connect a USB printer.",
+            )
+        })?;
+    test_printer(&printer.to_target()?)?;
+    Ok(printers)
 }
 
 #[cfg(not(target_os = "windows"))]

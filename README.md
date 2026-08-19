@@ -10,7 +10,10 @@ responsible for business data, translations, currencies, and layout composition.
 Version 0.1 supports USB printers on Windows through the standard `usbprint.sys` driver. It does
 not require replacing the printer driver with Zadig, WinUSB, or libusb.
 
-Linux, network, serial, mobile, HTML rendering, and Windows spooler jobs are not supported yet.
+Network printers (raw TCP, typically port 9100) are supported on all platforms. This is the path
+to use with emulators such as [EscPosEmulator](https://github.com/roydejong/EscPosEmulator).
+
+Linux serial, mobile, HTML rendering, and Windows spooler jobs are not supported yet.
 The minimum supported Rust version is 1.88, inherited from `escpos` 0.19.
 
 ## Install from source
@@ -120,14 +123,23 @@ Paper widths are `58` and `80` mm. Defaults are 80 mm and PC858.
 spooler printer names and there is no default-printer policy. Persist the selected `id` or `path` in
 the host application.
 
-A printer can be addressed by USB path or USB identifiers:
+A printer can be addressed by USB path, USB identifiers, or TCP host and port:
 
 ```ts
 { kind: 'windows_usb', path: printer.path }
 { kind: 'windows_usb', vendorId: 0x04b8, productId: 0x0202 }
+{ kind: 'network', host: '127.0.0.1', port: 9100 }
 ```
 
-`testPrinter({ printer })` sends a built-in test receipt to a specific target.
+`listPrinters()` also returns a TCP target when:
+
+- `ESCPOS_NETWORK_PRINTERS` lists `host:port` values (comma-separated), or
+- a debug build is running (includes `127.0.0.1:9100` for local emulators), or
+- a release build can connect to `127.0.0.1:9100`.
+
+Use `selfTest()` to list printers and send the built-in test receipt to the first network printer
+(or the first USB printer if none is listed). `testPrinter({ printer })` sends that same receipt to
+a specific target.
 
 ## Errors
 

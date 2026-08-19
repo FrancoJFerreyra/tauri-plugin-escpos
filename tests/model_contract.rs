@@ -53,3 +53,35 @@ fn serializes_public_types_with_camel_case_fields() {
     assert_eq!(value["vendorId"], 0x04b8);
     assert_eq!(value["productId"], 0x0202);
 }
+
+#[test]
+fn serializes_network_printer_target() {
+    let target = PrinterTarget::Network {
+        host: "127.0.0.1".into(),
+        port: 9100,
+    };
+
+    let value = serde_json::to_value(&target).unwrap();
+
+    assert_eq!(value["kind"], "network");
+    assert_eq!(value["host"], "127.0.0.1");
+    assert_eq!(value["port"], 9100);
+}
+
+#[test]
+fn deserializes_network_printer_target() {
+    let target: PrinterTarget = serde_json::from_value(serde_json::json!({
+        "kind": "network",
+        "host": "127.0.0.1",
+        "port": 9100
+    }))
+    .unwrap();
+
+    assert_eq!(
+        target,
+        PrinterTarget::Network {
+            host: "127.0.0.1".into(),
+            port: 9100,
+        }
+    );
+}

@@ -49,6 +49,7 @@ export type PrintDocument = {
 export type PrinterTarget =
   | { kind: 'windows_usb'; path: string }
   | { kind: 'windows_usb'; vendorId: number; productId: number }
+  | { kind: 'network'; host: string; port: number }
 
 export type PrinterInfo = {
   id: string
@@ -56,7 +57,9 @@ export type PrinterInfo = {
   name?: string
   vendorId?: number
   productId?: number
-  backend: 'windows_usb'
+  host?: string
+  port?: number
+  backend: 'windows_usb' | 'network'
 }
 
 export const ERROR_CODES = {
@@ -89,4 +92,20 @@ export async function listPrinters(): Promise<PrinterInfo[]> {
 
 export async function testPrinter(options: { printer: PrinterTarget }): Promise<void> {
   return invoke('plugin:escpos|test_printer', options)
+}
+
+export async function selfTest(): Promise<PrinterInfo[]> {
+  return invoke('plugin:escpos|self_test')
+}
+
+export function printerTargetFromInfo(printer: PrinterInfo): PrinterTarget {
+  if (printer.backend === 'network') {
+    return {
+      kind: 'network',
+      host: printer.host ?? printer.path.split(':')[0],
+      port: printer.port ?? Number(printer.path.split(':').at(-1)),
+    }
+  }
+
+  return { kind: 'windows_usb', path: printer.path }
 }

@@ -286,6 +286,24 @@ fn encodes_euro_as_pc858_byte() {
     );
 }
 
+#[test]
+fn parses_host_and_port_for_network_printers() {
+    assert_eq!(
+        printer::parse_host_port("127.0.0.1:9100"),
+        Some(("127.0.0.1".into(), 9100))
+    );
+    assert_eq!(printer::parse_host_port("127.0.0.1"), None);
+    assert_eq!(printer::parse_host_port(":9100"), None);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn lists_local_network_emulator_in_debug_builds() {
+    let printers = printer::list_printers().expect("listing printers should not fail");
+
+    assert!(printers.iter().any(|printer| printer.path == "127.0.0.1:9100"));
+}
+
 const ONE_PX_PNG: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 fn skip_gs_v0(bytes: &[u8]) -> &[u8] {

@@ -17,3 +17,8 @@ pub fn list_printers() -> Result<Vec<PrinterInfo>, EscposError> {
 pub fn test_printer(printer: PrinterTarget) -> Result<(), EscposError> {
     crate::printer::test_printer(&printer)
 }
+
+#[command]
+pub fn self_test() -> Result<Vec<PrinterInfo>, EscposError> {
+    printer::self_test()
+}

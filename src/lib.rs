@@ -20,7 +20,8 @@ pub fn init() -> TauriPlugin<Wry> {
         .invoke_handler(tauri::generate_handler![
             commands::print,
             commands::list_printers,
-            commands::test_printer
+            commands::test_printer,
+            commands::self_test
         ])
         .build()
 }
