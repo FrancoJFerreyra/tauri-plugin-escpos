@@ -3,9 +3,8 @@ use escpos::{
     driver::Driver,
     printer::Printer,
     utils::{
-        BarcodeFont, BarcodeHeight, BarcodeOption, BarcodePosition, BarcodeWidth, BitImageOption,
-        BitImageSize, JustifyMode, PageCode, Protocol, QRCodeCorrectionLevel, QRCodeModel,
-        QRCodeOption, UnderlineMode,
+        JustifyMode, PageCode, Protocol, QRCodeCorrectionLevel, QRCodeModel, QRCodeOption,
+        UnderlineMode,
     },
 };
 
@@ -14,10 +13,15 @@ use crate::models::{
     PrintDocument, PrinterInfo, PrinterTarget, TextStyle,
 };
 
-#[cfg(target_os = "windows")]
-use escpos::driver::WindowsUsbPrintDriver;
+#[path = "barcode.rs"]
+mod barcode;
+#[path = "raster.rs"]
+mod raster;
+
 #[cfg(target_os = "windows")]
 use crate::models::PrinterBackend;
+#[cfg(target_os = "windows")]
+use escpos::driver::WindowsUsbPrintDriver;
 
 #[cfg(target_os = "windows")]
 pub fn print_document(
@@ -179,7 +183,7 @@ fn render_block<D: Driver>(
             apply_style(printer, style.as_ref())?;
             let width = line_width / horizontal_scale(style.as_ref());
             for line in wrap_text(value, width) {
-                printer.writeln(&line).map_err(print_error)?;
+                writeln_encoded(printer, &line)?;
             }
         }
         Block::Feed { lines } => {
@@ -188,9 +192,7 @@ fn render_block<D: Driver>(
         Block::Divider { character } => {
             reset_style(printer)?;
             let value = character.as_deref().unwrap_or("-");
-            printer
-                .writeln(&value.repeat(line_width))
-                .map_err(print_error)?;
+            writeln_encoded(printer, &value.repeat(line_width))?;
         }
         Block::Columns { columns } => {
             render_columns(printer, columns, line_width)?;
@@ -203,14 +205,8 @@ fn render_block<D: Driver>(
         } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
             let bytes = decode_image(data)?;
-            let max_width = max_width_dots
-                .map(|width| u32::from(width.max(8) / 8 * 8))
-                .or(Some(512));
-            let option = BitImageOption::new(max_width, None, BitImageSize::Normal)
-                .map_err(invalid_document_error)?;
-            printer
-                .bit_image_from_bytes_option(&bytes, option)
-                .map_err(invalid_document_error)?;
+            let command = raster::gs_v0_command(&bytes, *max_width_dots)?;
+            printer.custom(&command).map_err(print_error)?;
         }
         Block::Barcode {
             value,
@@ -219,24 +215,7 @@ fn render_block<D: Driver>(
             print_value,
         } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
-            let position = if print_value.unwrap_or(true) {
-                BarcodePosition::Below
-            } else {
-                BarcodePosition::None
-            };
-            let option = BarcodeOption::new(
-                BarcodeWidth::M,
-                BarcodeHeight::S,
-                BarcodeFont::A,
-                position,
-            );
-            match symbology {
-                BarcodeSymbology::Ean13 => printer.ean13_option(value, option),
-                BarcodeSymbology::Ean8 => printer.ean8_option(value, option),
-                BarcodeSymbology::Upca => printer.upca_option(value, option),
-                BarcodeSymbology::Code39 => printer.code39_option(value, option),
-            }
-            .map_err(invalid_document_error)?;
+            render_barcode(printer, value, *symbology, print_value.unwrap_or(true))?;
         }
         Block::Qr { value, size, align } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
@@ -267,12 +246,113 @@ fn render_columns<D: Driver>(
 ) -> Result<(), EscposError> {
     for (index, (column, text)) in column_segments(columns, line_width).into_iter().enumerate() {
         apply_style(printer, column.style.as_ref())?;
-        printer.write(&text).map_err(print_error)?;
+        write_encoded(printer, &text)?;
         if index + 1 == columns.len() {
             printer.feed().map_err(print_error)?;
         }
     }
     Ok(())
+}
+
+fn render_barcode<D: Driver>(
+    printer: &mut Printer<D>,
+    value: &str,
+    symbology: BarcodeSymbology,
+    print_value: bool,
+) -> Result<(), EscposError> {
+    match symbology {
+        BarcodeSymbology::Ean13 => render_ean13(printer, value, print_value),
+        BarcodeSymbology::Ean8 => render_function_b(printer, 68, value, print_value),
+        BarcodeSymbology::Upca => render_function_b(printer, 65, value, print_value),
+        BarcodeSymbology::Code39 => render_function_b(printer, 69, value, print_value),
+    }
+}
+
+fn render_ean13<D: Driver>(
+    printer: &mut Printer<D>,
+    value: &str,
+    print_value: bool,
+) -> Result<(), EscposError> {
+    let (command, text) = barcode::ean13_command(value)?;
+    printer.custom(&command).map_err(print_error)?;
+    if print_value {
+        writeln_encoded(printer, &text)?;
+    }
+    Ok(())
+}
+
+fn render_function_b<D: Driver>(
+    printer: &mut Printer<D>,
+    system: u8,
+    value: &str,
+    print_value: bool,
+) -> Result<(), EscposError> {
+    printer.custom(&[0x1D, b'h', 80]).map_err(print_error)?;
+    printer.custom(&[0x1D, b'w', 2]).map_err(print_error)?;
+    let hri = if print_value { 2 } else { 0 };
+    printer.custom(&[0x1D, b'H', hri]).map_err(print_error)?;
+    printer
+        .custom(&barcode::function_b_command(system, value))
+        .map_err(print_error)?;
+    Ok(())
+}
+
+fn writeln_encoded<D: Driver>(printer: &mut Printer<D>, text: &str) -> Result<(), EscposError> {
+    write_encoded(printer, text)?;
+    printer.feed().map_err(print_error)?;
+    Ok(())
+}
+
+fn write_encoded<D: Driver>(printer: &mut Printer<D>, text: &str) -> Result<(), EscposError> {
+    printer.custom(&encode_pc858(text)).map_err(print_error)?;
+    Ok(())
+}
+
+fn encode_pc858(text: &str) -> Vec<u8> {
+    text.chars().map(encode_pc858_char).collect()
+}
+
+fn encode_pc858_char(c: char) -> u8 {
+    if (c as u32) < 0x80 {
+        c as u8
+    } else {
+        encode_pc858_high(c)
+    }
+}
+
+fn encode_pc858_high(c: char) -> u8 {
+    encode_pc858_currency(c).unwrap_or_else(|| encode_pc858_latin(c))
+}
+
+fn encode_pc858_currency(c: char) -> Option<u8> {
+    match c {
+        '€' => Some(0xD5),
+        '£' => Some(0x9C),
+        '¥' => Some(0xBE),
+        '¢' => Some(0xBD),
+        _ => None,
+    }
+}
+
+fn encode_pc858_latin(c: char) -> u8 {
+    match c {
+        'á' => 0xA0,
+        'é' => 0x82,
+        'í' => 0xA1,
+        'ó' => 0xA2,
+        'ú' => 0xA3,
+        'ñ' => 0xA4,
+        'Ñ' => 0xA5,
+        '¡' => 0xAD,
+        '¿' => 0xA8,
+        'ü' => 0x81,
+        'ö' => 0x94,
+        'ä' => 0x84,
+        'à' => 0x85,
+        'è' => 0x8A,
+        'ç' => 0x87,
+        _ => b'?',
+    }
 }
 
 fn apply_style<D: Driver>(
