@@ -15,9 +15,9 @@ use crate::models::{
 };
 
 #[cfg(target_os = "windows")]
-use escpos::driver::WindowsUsbPrintDriver;
-#[cfg(target_os = "windows")]
 use crate::models::PrinterBackend;
+#[cfg(target_os = "windows")]
+use escpos::driver::WindowsUsbPrintDriver;
 
 #[cfg(target_os = "windows")]
 pub fn print_document(
@@ -179,7 +179,7 @@ fn render_block<D: Driver>(
             apply_style(printer, style.as_ref())?;
             let width = line_width / horizontal_scale(style.as_ref());
             for line in wrap_text(value, width) {
-                printer.writeln(&line).map_err(print_error)?;
+                writeln_encoded(printer, &line)?;
             }
         }
         Block::Feed { lines } => {
@@ -188,9 +188,7 @@ fn render_block<D: Driver>(
         Block::Divider { character } => {
             reset_style(printer)?;
             let value = character.as_deref().unwrap_or("-");
-            printer
-                .writeln(&value.repeat(line_width))
-                .map_err(print_error)?;
+            writeln_encoded(printer, &value.repeat(line_width))?;
         }
         Block::Columns { columns } => {
             render_columns(printer, columns, line_width)?;
@@ -267,12 +265,70 @@ fn render_columns<D: Driver>(
 ) -> Result<(), EscposError> {
     for (index, (column, text)) in column_segments(columns, line_width).into_iter().enumerate() {
         apply_style(printer, column.style.as_ref())?;
-        printer.write(&text).map_err(print_error)?;
+        write_encoded(printer, &text)?;
         if index + 1 == columns.len() {
             printer.feed().map_err(print_error)?;
         }
     }
     Ok(())
+}
+
+fn writeln_encoded<D: Driver>(printer: &mut Printer<D>, text: &str) -> Result<(), EscposError> {
+    write_encoded(printer, text)?;
+    printer.feed().map_err(print_error)?;
+    Ok(())
+}
+
+fn write_encoded<D: Driver>(printer: &mut Printer<D>, text: &str) -> Result<(), EscposError> {
+    printer.custom(&encode_pc858(text)).map_err(print_error)?;
+    Ok(())
+}
+
+fn encode_pc858(text: &str) -> Vec<u8> {
+    text.chars().map(encode_pc858_char).collect()
+}
+
+fn encode_pc858_char(c: char) -> u8 {
+    if (c as u32) < 0x80 {
+        c as u8
+    } else {
+        encode_pc858_high(c)
+    }
+}
+
+fn encode_pc858_high(c: char) -> u8 {
+    encode_pc858_currency(c).unwrap_or_else(|| encode_pc858_latin(c))
+}
+
+fn encode_pc858_currency(c: char) -> Option<u8> {
+    match c {
+        '€' => Some(0xD5),
+        '£' => Some(0x9C),
+        '¥' => Some(0xBE),
+        '¢' => Some(0xBD),
+        _ => None,
+    }
+}
+
+fn encode_pc858_latin(c: char) -> u8 {
+    match c {
+        'á' => 0xA0,
+        'é' => 0x82,
+        'í' => 0xA1,
+        'ó' => 0xA2,
+        'ú' => 0xA3,
+        'ñ' => 0xA4,
+        'Ñ' => 0xA5,
+        '¡' => 0xAD,
+        '¿' => 0xA8,
+        'ü' => 0x81,
+        'ö' => 0x94,
+        'ä' => 0x84,
+        'à' => 0x85,
+        'è' => 0x8A,
+        'ç' => 0x87,
+        _ => b'?',
+    }
 }
 
 fn apply_style<D: Driver>(

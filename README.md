@@ -120,12 +120,14 @@ Paper widths are `58` and `80` mm. Defaults are 80 mm and PC858.
 spooler printer names and there is no default-printer policy. Persist the selected `id` or `path` in
 the host application.
 
-A printer can be addressed by path or USB identifiers:
+A printer can be addressed by USB path or USB identifiers:
 
 ```ts
 { kind: 'windows_usb', path: printer.path }
 { kind: 'windows_usb', vendorId: 0x04b8, productId: 0x0202 }
 ```
+
+`testPrinter({ printer })` sends a built-in test receipt to a specific target.
 
 ## Errors
 
