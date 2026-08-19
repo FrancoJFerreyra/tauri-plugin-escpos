@@ -3,8 +3,9 @@ use escpos::{
     driver::Driver,
     printer::Printer,
     utils::{
-        JustifyMode, PageCode, Protocol, QRCodeCorrectionLevel, QRCodeModel, QRCodeOption,
-        UnderlineMode,
+        BarcodeFont, BarcodeHeight, BarcodeOption, BarcodePosition, BarcodeWidth, BitImageOption,
+        BitImageSize, JustifyMode, PageCode, Protocol, QRCodeCorrectionLevel, QRCodeModel,
+        QRCodeOption, UnderlineMode,
     },
 };
 
@@ -16,11 +17,6 @@ use crate::models::{
     PrintDocument, PrinterInfo, PrinterTarget, TextStyle,
 };
 use escpos::driver::NetworkDriver;
-
-#[path = "barcode.rs"]
-mod barcode;
-#[path = "raster.rs"]
-mod raster;
 
 #[cfg(target_os = "windows")]
 use crate::models::PrinterBackend;
@@ -307,8 +303,14 @@ fn render_block<D: Driver>(
         } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
             let bytes = decode_image(data)?;
-            let command = raster::gs_v0_command(&bytes, *max_width_dots)?;
-            printer.custom(&command).map_err(print_error)?;
+            let max_width = max_width_dots
+                .map(|width| u32::from(width.max(8) / 8 * 8))
+                .or(Some(512));
+            let option = BitImageOption::new(max_width, None, BitImageSize::Normal)
+                .map_err(invalid_document_error)?;
+            printer
+                .bit_image_from_bytes_option(&bytes, option)
+                .map_err(invalid_document_error)?;
         }
         Block::Barcode {
             value,
@@ -317,7 +319,24 @@ fn render_block<D: Driver>(
             print_value,
         } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
-            render_barcode(printer, value, *symbology, print_value.unwrap_or(true))?;
+            let position = if print_value.unwrap_or(true) {
+                BarcodePosition::Below
+            } else {
+                BarcodePosition::None
+            };
+            let option = BarcodeOption::new(
+                BarcodeWidth::M,
+                BarcodeHeight::S,
+                BarcodeFont::A,
+                position,
+            );
+            match symbology {
+                BarcodeSymbology::Ean13 => printer.ean13_option(value, option),
+                BarcodeSymbology::Ean8 => printer.ean8_option(value, option),
+                BarcodeSymbology::Upca => printer.upca_option(value, option),
+                BarcodeSymbology::Code39 => printer.code39_option(value, option),
+            }
+            .map_err(invalid_document_error)?;
         }
         Block::Qr { value, size, align } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
@@ -353,49 +372,6 @@ fn render_columns<D: Driver>(
             printer.feed().map_err(print_error)?;
         }
     }
-    Ok(())
-}
-
-fn render_barcode<D: Driver>(
-    printer: &mut Printer<D>,
-    value: &str,
-    symbology: BarcodeSymbology,
-    print_value: bool,
-) -> Result<(), EscposError> {
-    match symbology {
-        BarcodeSymbology::Ean13 => render_ean13(printer, value, print_value),
-        BarcodeSymbology::Ean8 => render_function_b(printer, 68, value, print_value),
-        BarcodeSymbology::Upca => render_function_b(printer, 65, value, print_value),
-        BarcodeSymbology::Code39 => render_function_b(printer, 69, value, print_value),
-    }
-}
-
-fn render_ean13<D: Driver>(
-    printer: &mut Printer<D>,
-    value: &str,
-    print_value: bool,
-) -> Result<(), EscposError> {
-    let (command, text) = barcode::ean13_command(value)?;
-    printer.custom(&command).map_err(print_error)?;
-    if print_value {
-        writeln_encoded(printer, &text)?;
-    }
-    Ok(())
-}
-
-fn render_function_b<D: Driver>(
-    printer: &mut Printer<D>,
-    system: u8,
-    value: &str,
-    print_value: bool,
-) -> Result<(), EscposError> {
-    printer.custom(&[0x1D, b'h', 80]).map_err(print_error)?;
-    printer.custom(&[0x1D, b'w', 2]).map_err(print_error)?;
-    let hri = if print_value { 2 } else { 0 };
-    printer.custom(&[0x1D, b'H', hri]).map_err(print_error)?;
-    printer
-        .custom(&barcode::function_b_command(system, value))
-        .map_err(print_error)?;
     Ok(())
 }
 
