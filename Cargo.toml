@@ -27,7 +27,6 @@ tauri-plugin = ["dep:tauri"]
 [dependencies]
 tauri = { version = "2.0", default-features = false, optional = true }
 escpos = { version = "0.19.0", default-features = false, features = ["std", "barcodes", "codes_2d", "graphics", "usbprint"] }
-image = "0.25"
 serde = { version = "1.0", features = ["derive"] }
 base64 = "0.22"
 
