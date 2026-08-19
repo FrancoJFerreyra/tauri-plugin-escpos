@@ -122,7 +122,7 @@ fn raster_image_keeps_following_text_in_the_byte_stream() {
 }
 
 #[test]
-fn ean13_barcode_uses_native_gs_k_command() {
+fn ean13_barcode_is_raster_and_keeps_following_footer_text() {
     let driver = RecordingDriver::default();
     let bytes = driver.0.clone();
     printer::render_document(
@@ -130,20 +130,35 @@ fn ean13_barcode_uses_native_gs_k_command() {
         &PrintDocument {
             paper_width_mm: None,
             character_set: None,
-            blocks: vec![Block::Barcode {
-                value: "4959920317636".into(),
-                symbology: BarcodeSymbology::Ean13,
-                align: Some(Align::Center),
-                print_value: Some(true),
-            }],
+            blocks: vec![
+                Block::Barcode {
+                    value: "4959920317636".into(),
+                    symbology: BarcodeSymbology::Ean13,
+                    align: Some(Align::Center),
+                    print_value: Some(true),
+                },
+                Block::Text {
+                    value: "Footer sample".into(),
+                    style: None,
+                },
+            ],
         },
     )
     .unwrap();
 
     let bytes = bytes.lock().unwrap();
     assert!(
-        bytes.windows(2).any(|value| value == [0x1D, b'k']),
-        "EAN-13 must use native GS k from escpos-rs, got {bytes:?}"
+        !bytes.windows(2).any(|value| value == [0x1D, b'k']),
+        "EAN-13 must not use GS k, got {bytes:?}"
+    );
+    let after_raster = skip_gs_v0(&bytes);
+    assert!(
+        after_raster.windows(13).any(|value| value == b"Footer sample"),
+        "footer must stay after the barcode raster, got {bytes:?}"
+    );
+    assert!(
+        after_raster.windows(13).any(|value| value == b"4959920317636"),
+        "barcode digits must print under the raster, got {bytes:?}"
     );
 }
 
