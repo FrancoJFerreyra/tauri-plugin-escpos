@@ -189,19 +189,35 @@ pub(crate) fn wrap_text(value: &str, width: usize) -> Vec<String> {
     result
 }
 
-pub(super) fn column_segments<'a>(
-    columns: &'a [Column],
-    line_width: usize,
-) -> Vec<(&'a Column, String)> {
+pub(super) fn column_rows(columns: &[Column], line_width: usize) -> Vec<String> {
     let widths = padded_column_widths(columns, line_width);
-    columns
+    let wrapped: Vec<Vec<String>> = columns
         .iter()
         .enumerate()
         .map(|(index, column)| {
             let align = column
                 .align
                 .unwrap_or(if index == 0 { Align::Left } else { Align::Right });
-            (column, fit_text(&column.text, widths[index], align))
+            wrap_text(&column.text, widths[index].max(1))
+                .into_iter()
+                .map(|line| pad_cell(&line, widths[index], align))
+                .collect()
+        })
+        .collect();
+
+    let row_count = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+    (0..row_count)
+        .map(|row| {
+            wrapped
+                .iter()
+                .enumerate()
+                .map(|(index, lines)| {
+                    lines
+                        .get(row)
+                        .cloned()
+                        .unwrap_or_else(|| " ".repeat(widths[index]))
+                })
+                .collect()
         })
         .collect()
 }
@@ -238,7 +254,7 @@ fn physical_column_widths(columns: &[Column], line_width: usize) -> Vec<usize> {
         .collect()
 }
 
-fn fit_text(value: &str, width: usize, align: Align) -> String {
+fn pad_cell(value: &str, width: usize, align: Align) -> String {
     let value: String = value.chars().take(width).collect();
     let padding = width.saturating_sub(value.chars().count());
     match align {

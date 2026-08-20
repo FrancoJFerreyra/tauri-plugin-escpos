@@ -13,7 +13,7 @@ use escpos::{
 use super::barcode;
 use super::raster;
 use super::text::{
-    apply_font_style, apply_style, column_segments, horizontal_scale, reset_style, set_alignment,
+    apply_font_style, apply_style, column_rows, horizontal_scale, reset_style, set_alignment,
     wrap_text, write_line_feed, write_line_feeds, writeln_encoded,
 };
 use super::{invalid_document_error, print_error, GraphicsBackend};
@@ -149,11 +149,9 @@ fn render_columns<D: Driver>(
 ) -> Result<(), EscposError> {
     reset_style(printer)?;
     apply_font_style(printer, columns.first().and_then(|column| column.style.as_ref()))?;
-    let line: String = column_segments(columns, line_width)
-        .into_iter()
-        .map(|(_, text)| text)
-        .collect();
-    writeln_encoded(printer, &line)?;
+    for line in column_rows(columns, line_width) {
+        writeln_encoded(printer, &line)?;
+    }
     Ok(())
 }
 

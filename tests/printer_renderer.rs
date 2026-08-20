@@ -96,6 +96,53 @@ fn formats_columns_using_remaining_width_for_first_column() {
 }
 
 #[test]
+fn wraps_column_text_instead_of_truncating() {
+    let columns = vec![
+        Column {
+            text: "Chocolate croissant with extra butter".into(),
+            width: None,
+            align: None,
+            style: None,
+        },
+        Column {
+            text: "2".into(),
+            width: Some(0.2),
+            align: Some(Align::Right),
+            style: None,
+        },
+        Column {
+            text: "4.50".into(),
+            width: Some(0.3),
+            align: Some(Align::Right),
+            style: None,
+        },
+    ];
+
+    let driver = RecordingDriver::default();
+    let bytes = driver.0.clone();
+    printer::render_document(
+        driver,
+        &PrintDocument {
+            paper_width_mm: None,
+            character_set: None,
+            blocks: vec![Block::Columns { columns }],
+        },
+    )
+    .unwrap();
+
+    let bytes = bytes.lock().unwrap();
+    assert!(
+        bytes.windows(48).any(|value| value
+            == b"Chocolate croissant with         2          4.50"),
+        "first wrapped column row must keep qty and price, got {bytes:?}"
+    );
+    assert!(
+        bytes.windows(12).any(|value| value == b"extra butter"),
+        "overflowing column text must wrap onto the next row, got {bytes:?}"
+    );
+}
+
+#[test]
 fn decodes_data_url_images() {
     let bytes = printer::render::decode_image("data:image/png;base64,aGVsbG8=").unwrap();
 
