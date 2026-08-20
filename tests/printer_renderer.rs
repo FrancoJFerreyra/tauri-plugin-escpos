@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use escpos::driver::Driver;
 
-#[path = "../src/models.rs"]
+#[path = "../src/models/mod.rs"]
 mod models;
-#[path = "../src/printer.rs"]
+#[path = "../src/printer/mod.rs"]
 mod printer;
 
 use models::{Align, Block, BarcodeSymbology, Column, ImageMime, PrintDocument, PrinterTarget};
@@ -36,7 +36,7 @@ impl Driver for RecordingDriver {
 
 #[test]
 fn wraps_text_to_paper_width_without_losing_words() {
-    let lines = printer::wrap_text("one two three four", 9);
+    let lines = printer::text::wrap_text("one two three four", 9);
 
     assert_eq!(lines, vec!["one two", "three", "four"]);
 }
@@ -97,7 +97,7 @@ fn formats_columns_using_remaining_width_for_first_column() {
 
 #[test]
 fn decodes_data_url_images() {
-    let bytes = printer::decode_image("data:image/png;base64,aGVsbG8=").unwrap();
+    let bytes = printer::render::decode_image("data:image/png;base64,aGVsbG8=").unwrap();
 
     assert_eq!(bytes, b"hello");
 }
@@ -106,7 +106,7 @@ fn decodes_data_url_images() {
 fn raster_image_keeps_following_text_in_the_byte_stream() {
     let driver = RecordingDriver::default();
     let bytes = driver.0.clone();
-    printer::render_with_graphics(
+    printer::render::render_with_graphics(
         driver,
         &PrintDocument {
             paper_width_mm: None,
@@ -145,7 +145,7 @@ fn raster_image_keeps_following_text_in_the_byte_stream() {
 fn ean13_barcode_is_raster_and_keeps_following_footer_text() {
     let driver = RecordingDriver::default();
     let bytes = driver.0.clone();
-    printer::render_with_graphics(
+    printer::render::render_with_graphics(
         driver,
         &PrintDocument {
             paper_width_mm: None,
