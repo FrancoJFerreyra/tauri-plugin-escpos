@@ -9,7 +9,8 @@ mod models;
 #[path = "../src/printer.rs"]
 mod printer;
 
-use models::{Align, Block, BarcodeSymbology, Column, ImageMime, PrintDocument};
+use models::{Align, Block, BarcodeSymbology, Column, ImageMime, PrintDocument, PrinterTarget};
+use printer::GraphicsBackend;
 
 #[derive(Clone, Default)]
 struct RecordingDriver(Arc<Mutex<Vec<u8>>>);
@@ -105,7 +106,7 @@ fn decodes_data_url_images() {
 fn raster_image_keeps_following_text_in_the_byte_stream() {
     let driver = RecordingDriver::default();
     let bytes = driver.0.clone();
-    printer::render_document(
+    printer::render_with_graphics(
         driver,
         &PrintDocument {
             paper_width_mm: None,
@@ -123,6 +124,7 @@ fn raster_image_keeps_following_text_in_the_byte_stream() {
                 },
             ],
         },
+        GraphicsBackend::Emulator,
     )
     .unwrap();
 
@@ -143,7 +145,7 @@ fn raster_image_keeps_following_text_in_the_byte_stream() {
 fn ean13_barcode_is_raster_and_keeps_following_footer_text() {
     let driver = RecordingDriver::default();
     let bytes = driver.0.clone();
-    printer::render_document(
+    printer::render_with_graphics(
         driver,
         &PrintDocument {
             paper_width_mm: None,
@@ -161,6 +163,7 @@ fn ean13_barcode_is_raster_and_keeps_following_footer_text() {
                 },
             ],
         },
+        GraphicsBackend::Emulator,
     )
     .unwrap();
 
@@ -325,6 +328,82 @@ fn lists_local_network_emulator_in_debug_builds() {
     let printers = printer::list_printers().expect("listing printers should not fail");
 
     assert!(printers.iter().any(|printer| printer.path == "127.0.0.1:9100"));
+}
+
+#[test]
+fn hardware_ean13_uses_escpos_gs_k() {
+    let driver = RecordingDriver::default();
+    let bytes = driver.0.clone();
+    printer::render_document(
+        driver,
+        &PrintDocument {
+            paper_width_mm: None,
+            character_set: None,
+            blocks: vec![Block::Barcode {
+                value: "4959920317636".into(),
+                symbology: BarcodeSymbology::Ean13,
+                align: Some(Align::Center),
+                print_value: Some(true),
+            }],
+        },
+    )
+    .unwrap();
+
+    let bytes = bytes.lock().unwrap();
+    assert!(
+        bytes.windows(2).any(|value| value == [0x1D, b'k']),
+        "USB/network printers must use escpos-rs GS k, got {bytes:?}"
+    );
+}
+
+#[test]
+fn hardware_image_uses_escpos_bit_image() {
+    let driver = RecordingDriver::default();
+    let bytes = driver.0.clone();
+    printer::render_document(
+        driver,
+        &PrintDocument {
+            paper_width_mm: None,
+            character_set: None,
+            blocks: vec![Block::Image {
+                data: ONE_PX_PNG.into(),
+                mime: ImageMime::Png,
+                max_width_dots: Some(8),
+                align: Some(Align::Center),
+            }],
+        },
+    )
+    .unwrap();
+
+    let bytes = bytes.lock().unwrap();
+    assert!(
+        bytes.windows(3).any(|value| value == [0x1D, b'v', b'0']),
+        "hardware images must use escpos-rs GS v 0 bit image, got {bytes:?}"
+    );
+}
+
+#[test]
+fn local_emulator_uses_dev_raster_backend() {
+    assert_eq!(
+        printer::graphics_backend_for(&PrinterTarget::Network {
+            host: "127.0.0.1".into(),
+            port: 9100,
+        }),
+        GraphicsBackend::Emulator
+    );
+    assert_eq!(
+        printer::graphics_backend_for(&PrinterTarget::Network {
+            host: "192.168.1.50".into(),
+            port: 9100,
+        }),
+        GraphicsBackend::Escpos
+    );
+    assert_eq!(
+        printer::graphics_backend_for(&PrinterTarget::WindowsUsbByPath {
+            path: r"\\?\usb#vid_1234".into(),
+        }),
+        GraphicsBackend::Escpos
+    );
 }
 
 const ONE_PX_PNG: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";

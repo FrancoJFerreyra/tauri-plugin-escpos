@@ -3,8 +3,9 @@ use escpos::{
     driver::Driver,
     printer::Printer,
     utils::{
-        JustifyMode, PageCode, Protocol, QRCodeCorrectionLevel, QRCodeModel, QRCodeOption,
-        UnderlineMode,
+        BarcodeFont, BarcodeHeight, BarcodeOption, BarcodePosition, BarcodeWidth, BitImageOption,
+        BitImageSize, JustifyMode, PageCode, Protocol, QRCodeCorrectionLevel, QRCodeModel,
+        QRCodeOption, UnderlineMode,
     },
 };
 
@@ -32,6 +33,12 @@ const DEFAULT_NETWORK_PORT: u16 = 9100;
 const NETWORK_OPEN_TIMEOUT: Duration = Duration::from_secs(2);
 const NETWORK_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphicsBackend {
+    Escpos,
+    Emulator,
+}
+
 pub fn print_document(
     target: &PrinterTarget,
     document: &PrintDocument,
@@ -46,7 +53,7 @@ pub fn print_document(
                         format!("Failed to open Windows USB printer: {error}"),
                     )
                 })?;
-                render_document(driver, document)
+                render_with_graphics(driver, document, GraphicsBackend::Escpos)
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -70,7 +77,7 @@ pub fn print_document(
                             ),
                         )
                     })?;
-                render_document(driver, document)
+                render_with_graphics(driver, document, GraphicsBackend::Escpos)
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -86,7 +93,7 @@ pub fn print_document(
                     format!("Failed to open network printer {host}:{port}: {error}"),
                 )
             })?;
-            render_document(driver, document)
+            render_with_graphics(driver, document, graphics_backend_for(target))
         }
     }
 }
@@ -255,6 +262,14 @@ pub fn render_document<D: Driver>(
     driver: D,
     document: &PrintDocument,
 ) -> Result<(), EscposError> {
+    render_with_graphics(driver, document, GraphicsBackend::Escpos)
+}
+
+pub fn render_with_graphics<D: Driver>(
+    driver: D,
+    document: &PrintDocument,
+    graphics: GraphicsBackend,
+) -> Result<(), EscposError> {
     document.validate()?;
 
     let mut printer = Printer::new(driver, Protocol::default(), None);
@@ -268,17 +283,31 @@ pub fn render_document<D: Driver>(
 
     let line_width = document.characters_per_line();
     for block in &document.blocks {
-        render_block(&mut printer, block, line_width)?;
+        render_block(&mut printer, block, line_width, graphics)?;
     }
 
     printer.print().map_err(print_error)?;
     Ok(())
 }
 
+pub(crate) fn graphics_backend_for(target: &PrinterTarget) -> GraphicsBackend {
+    match target {
+        PrinterTarget::Network { host, .. } if is_local_emulator_host(host) => {
+            GraphicsBackend::Emulator
+        }
+        _ => GraphicsBackend::Escpos,
+    }
+}
+
+fn is_local_emulator_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
 fn render_block<D: Driver>(
     printer: &mut Printer<D>,
     block: &Block,
     line_width: usize,
+    graphics: GraphicsBackend,
 ) -> Result<(), EscposError> {
     match block {
         Block::Text { value, style } => {
@@ -306,10 +335,7 @@ fn render_block<D: Driver>(
             ..
         } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
-            let bytes = decode_image(data)?;
-            let command = raster::gs_v0_command(&bytes, *max_width_dots)?;
-            printer.custom(&command).map_err(print_error)?;
-            write_line_feed(printer)?;
+            render_image(printer, data, *max_width_dots, graphics)?;
         }
         Block::Barcode {
             value,
@@ -318,7 +344,13 @@ fn render_block<D: Driver>(
             print_value,
         } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
-            render_barcode(printer, value, *symbology, print_value.unwrap_or(true))?;
+            render_barcode(
+                printer,
+                value,
+                *symbology,
+                print_value.unwrap_or(true),
+                graphics,
+            )?;
         }
         Block::Qr { value, size, align } => {
             set_alignment(printer, align.unwrap_or(Align::Center))?;
@@ -342,6 +374,33 @@ fn render_block<D: Driver>(
     Ok(())
 }
 
+fn render_image<D: Driver>(
+    printer: &mut Printer<D>,
+    data: &str,
+    max_width_dots: Option<u16>,
+    graphics: GraphicsBackend,
+) -> Result<(), EscposError> {
+    let bytes = decode_image(data)?;
+    match graphics {
+        GraphicsBackend::Emulator => {
+            let command = raster::gs_v0_command(&bytes, max_width_dots)?;
+            printer.custom(&command).map_err(print_error)?;
+            write_line_feed(printer)
+        }
+        GraphicsBackend::Escpos => {
+            let max_width = max_width_dots
+                .map(|width| u32::from(width.max(8) / 8 * 8))
+                .or(Some(512));
+            let option = BitImageOption::new(max_width, None, BitImageSize::Normal)
+                .map_err(invalid_document_error)?;
+            printer
+                .bit_image_from_bytes_option(&bytes, option)
+                .map_err(invalid_document_error)?;
+            Ok(())
+        }
+    }
+}
+
 fn render_columns<D: Driver>(
     printer: &mut Printer<D>,
     columns: &[Column],
@@ -362,16 +421,56 @@ fn render_barcode<D: Driver>(
     value: &str,
     symbology: BarcodeSymbology,
     print_value: bool,
+    graphics: GraphicsBackend,
+) -> Result<(), EscposError> {
+    match graphics {
+        GraphicsBackend::Emulator => render_emulator_barcode(printer, value, symbology, print_value),
+        GraphicsBackend::Escpos => render_escpos_barcode(printer, value, symbology, print_value),
+    }
+}
+
+fn render_escpos_barcode<D: Driver>(
+    printer: &mut Printer<D>,
+    value: &str,
+    symbology: BarcodeSymbology,
+    print_value: bool,
+) -> Result<(), EscposError> {
+    let position = if print_value {
+        BarcodePosition::Below
+    } else {
+        BarcodePosition::None
+    };
+    let option = BarcodeOption::new(
+        BarcodeWidth::M,
+        BarcodeHeight::S,
+        BarcodeFont::A,
+        position,
+    );
+    match symbology {
+        BarcodeSymbology::Ean13 => printer.ean13_option(value, option),
+        BarcodeSymbology::Ean8 => printer.ean8_option(value, option),
+        BarcodeSymbology::Upca => printer.upca_option(value, option),
+        BarcodeSymbology::Code39 => printer.code39_option(value, option),
+    }
+    .map_err(invalid_document_error)?;
+    Ok(())
+}
+
+fn render_emulator_barcode<D: Driver>(
+    printer: &mut Printer<D>,
+    value: &str,
+    symbology: BarcodeSymbology,
+    print_value: bool,
 ) -> Result<(), EscposError> {
     match symbology {
-        BarcodeSymbology::Ean13 => render_ean13(printer, value, print_value),
+        BarcodeSymbology::Ean13 => render_emulator_ean13(printer, value, print_value),
         BarcodeSymbology::Ean8 => render_function_b(printer, 68, value, print_value),
         BarcodeSymbology::Upca => render_function_b(printer, 65, value, print_value),
         BarcodeSymbology::Code39 => render_function_b(printer, 69, value, print_value),
     }
 }
 
-fn render_ean13<D: Driver>(
+fn render_emulator_ean13<D: Driver>(
     printer: &mut Printer<D>,
     value: &str,
     print_value: bool,
