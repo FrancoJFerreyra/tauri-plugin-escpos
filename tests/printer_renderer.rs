@@ -79,6 +79,19 @@ fn formats_columns_using_remaining_width_for_first_column() {
     assert!(bytes.windows(24).any(|value| value == b"Coffee                  "));
     assert!(bytes.windows(10).any(|value| value == b"         2"));
     assert!(bytes.windows(14).any(|value| value == b"          4.50"));
+    assert!(
+        bytes.windows(48).any(|value| value
+            == b"Coffee                           2          4.50"),
+        "column row must fill the character line with spaces, got {bytes:?}"
+    );
+    assert!(
+        !bytes.windows(2).any(|value| value == [0x1B, b'$']),
+        "emulator-incompatible ESC $ must not be sent, got {bytes:?}"
+    );
+    assert!(
+        !bytes.windows(2).any(|value| value == [0x1D, b'W']),
+        "emulator-incompatible GS W must not be sent, got {bytes:?}"
+    );
 }
 
 #[test]
@@ -115,6 +128,11 @@ fn raster_image_keeps_following_text_in_the_byte_stream() {
 
     let bytes = bytes.lock().unwrap();
     let after_raster = skip_gs_v0(&bytes);
+    assert_eq!(
+        after_raster.first().copied(),
+        Some(0x0A),
+        "GS v 0 must be followed by LF so emulators resume text, got {bytes:?}"
+    );
     assert!(
         after_raster.windows(6).any(|value| value == b"HEADER"),
         "text after the logo must stay after GS v 0, got {bytes:?}"
@@ -152,6 +170,11 @@ fn ean13_barcode_is_raster_and_keeps_following_footer_text() {
         "EAN-13 must not use GS k, got {bytes:?}"
     );
     let after_raster = skip_gs_v0(&bytes);
+    assert_eq!(
+        after_raster.first().copied(),
+        Some(0x0A),
+        "barcode raster must be followed by LF so emulators resume text, got {bytes:?}"
+    );
     assert!(
         after_raster.windows(13).any(|value| value == b"Footer sample"),
         "footer must stay after the barcode raster, got {bytes:?}"

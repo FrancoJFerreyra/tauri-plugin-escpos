@@ -289,7 +289,7 @@ fn render_block<D: Driver>(
             }
         }
         Block::Feed { lines } => {
-            printer.feeds(lines.unwrap_or(1)).map_err(print_error)?;
+            write_line_feeds(printer, lines.unwrap_or(1))?;
         }
         Block::Divider { character } => {
             reset_style(printer)?;
@@ -309,6 +309,7 @@ fn render_block<D: Driver>(
             let bytes = decode_image(data)?;
             let command = raster::gs_v0_command(&bytes, *max_width_dots)?;
             printer.custom(&command).map_err(print_error)?;
+            write_line_feed(printer)?;
         }
         Block::Barcode {
             value,
@@ -346,13 +347,13 @@ fn render_columns<D: Driver>(
     columns: &[Column],
     line_width: usize,
 ) -> Result<(), EscposError> {
-    for (index, (column, text)) in column_segments(columns, line_width).into_iter().enumerate() {
-        apply_style(printer, column.style.as_ref())?;
-        write_encoded(printer, &text)?;
-        if index + 1 == columns.len() {
-            printer.feed().map_err(print_error)?;
-        }
-    }
+    reset_style(printer)?;
+    apply_font_style(printer, columns.first().and_then(|column| column.style.as_ref()))?;
+    let line: String = column_segments(columns, line_width)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    writeln_encoded(printer, &line)?;
     Ok(())
 }
 
@@ -377,6 +378,7 @@ fn render_ean13<D: Driver>(
 ) -> Result<(), EscposError> {
     let (command, text) = barcode::ean13_command(value)?;
     printer.custom(&command).map_err(print_error)?;
+    write_line_feed(printer)?;
     if print_value {
         writeln_encoded(printer, &text)?;
     }
@@ -401,12 +403,23 @@ fn render_function_b<D: Driver>(
 
 fn writeln_encoded<D: Driver>(printer: &mut Printer<D>, text: &str) -> Result<(), EscposError> {
     write_encoded(printer, text)?;
-    printer.feed().map_err(print_error)?;
-    Ok(())
+    write_line_feed(printer)
 }
 
 fn write_encoded<D: Driver>(printer: &mut Printer<D>, text: &str) -> Result<(), EscposError> {
     printer.custom(&encode_pc858(text)).map_err(print_error)?;
+    Ok(())
+}
+
+fn write_line_feeds<D: Driver>(printer: &mut Printer<D>, lines: u8) -> Result<(), EscposError> {
+    for _ in 0..lines {
+        write_line_feed(printer)?;
+    }
+    Ok(())
+}
+
+fn write_line_feed<D: Driver>(printer: &mut Printer<D>) -> Result<(), EscposError> {
+    printer.custom(&[0x0A]).map_err(print_error)?;
     Ok(())
 }
 
@@ -465,26 +478,36 @@ fn apply_style<D: Driver>(
     let Some(style) = style else {
         return Ok(());
     };
+    apply_font_style(printer, Some(style))?;
+    set_alignment(printer, style.align.unwrap_or(Align::Left))
+}
 
+fn apply_font_style<D: Driver>(
+    printer: &mut Printer<D>,
+    style: Option<&TextStyle>,
+) -> Result<(), EscposError> {
+    let (width, height) = font_dots(style.and_then(|style| style.size));
     printer
-        .bold(style.bold.unwrap_or(false))
+        .bold(style.and_then(|style| style.bold).unwrap_or(false))
         .and_then(|printer| {
-            printer.underline(if style.underline.unwrap_or(false) {
+            printer.underline(if style.and_then(|style| style.underline).unwrap_or(false) {
                 UnderlineMode::Single
             } else {
                 UnderlineMode::None
             })
         })
+        .and_then(|printer| printer.size(width, height))
         .map_err(print_error)?;
+    Ok(())
+}
 
-    let (width, height) = match style.size.unwrap_or(FontSize::Normal) {
+fn font_dots(size: Option<FontSize>) -> (u8, u8) {
+    match size.unwrap_or(FontSize::Normal) {
         FontSize::Normal => (1, 1),
         FontSize::Wide => (2, 1),
         FontSize::Tall => (1, 2),
         FontSize::Double => (2, 2),
-    };
-    printer.size(width, height).map_err(print_error)?;
-    set_alignment(printer, style.align.unwrap_or(Align::Left))
+    }
 }
 
 fn reset_style<D: Driver>(printer: &mut Printer<D>) -> Result<(), EscposError> {
@@ -559,35 +582,47 @@ pub(crate) fn wrap_text(value: &str, width: usize) -> Vec<String> {
 }
 
 fn column_segments<'a>(columns: &'a [Column], line_width: usize) -> Vec<(&'a Column, String)> {
+    let widths = padded_column_widths(columns, line_width);
+    columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let align = column
+                .align
+                .unwrap_or(if index == 0 { Align::Left } else { Align::Right });
+            (column, fit_text(&column.text, widths[index], align))
+        })
+        .collect()
+}
+
+fn padded_column_widths(columns: &[Column], line_width: usize) -> Vec<usize> {
+    let mut widths = physical_column_widths(columns, line_width);
+    let used: usize = widths.iter().sum();
+    if let Some(last) = widths.last_mut() {
+        *last += line_width.saturating_sub(used);
+    }
+    widths
+}
+
+fn physical_column_widths(columns: &[Column], line_width: usize) -> Vec<usize> {
     let explicit_width: usize = columns
         .iter()
         .filter_map(|column| column.width)
         .map(|width| (width * line_width as f32).round() as usize)
         .sum();
-    let unspecified_count = columns
-        .iter()
-        .filter(|column| column.width.is_none())
-        .count();
-    let remaining = line_width.saturating_sub(explicit_width);
+    let unspecified_count = columns.iter().filter(|column| column.width.is_none()).count();
     let default_width = if unspecified_count == 0 {
         0
     } else {
-        remaining / unspecified_count
+        line_width.saturating_sub(explicit_width) / unspecified_count
     };
-
     columns
         .iter()
-        .enumerate()
-        .map(|(index, column)| {
-            let physical_width = column
+        .map(|column| {
+            column
                 .width
                 .map(|value| (value * line_width as f32).round() as usize)
-                .unwrap_or(default_width);
-            let width = physical_width / horizontal_scale(column.style.as_ref());
-            let align = column
-                .align
-                .unwrap_or(if index == 0 { Align::Left } else { Align::Right });
-            (column, fit_text(&column.text, width, align))
+                .unwrap_or(default_width)
         })
         .collect()
 }
