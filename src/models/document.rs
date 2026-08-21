@@ -66,7 +66,6 @@ pub enum FontSize {
     Wide,
     Tall,
     Double,
-    Big,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

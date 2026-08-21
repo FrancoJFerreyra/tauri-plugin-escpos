@@ -109,7 +109,7 @@ fn font_dots(size: Option<FontSize>) -> (u8, u8) {
         FontSize::Small | FontSize::Normal => (1, 1),
         FontSize::Wide => (2, 1),
         FontSize::Tall => (1, 2),
-        FontSize::Double | FontSize::Big => (2, 2),
+        FontSize::Double => (2, 2),
     }
 }
 
@@ -139,7 +139,7 @@ pub(super) fn set_alignment<D: Driver>(
 
 pub(super) fn horizontal_scale(style: Option<&TextStyle>) -> usize {
     match style.and_then(|style| style.size) {
-        Some(FontSize::Wide | FontSize::Double | FontSize::Big) => 2,
+        Some(FontSize::Wide | FontSize::Double) => 2,
         _ => 1,
     }
 }

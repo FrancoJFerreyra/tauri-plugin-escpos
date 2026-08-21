@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
 export type Align = 'left' | 'center' | 'right'
-export type FontSize = 'small' | 'normal' | 'wide' | 'tall' | 'double' | 'big'
+export type FontSize = 'small' | 'normal' | 'wide' | 'tall' | 'double'
 export type CharacterSet = 'PC858'
 
 export type TextStyle = {
