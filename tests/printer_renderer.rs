@@ -4,12 +4,17 @@ use std::sync::{Arc, Mutex};
 
 use escpos::driver::Driver;
 
-#[path = "../src/models.rs"]
+#[path = "../src/models/mod.rs"]
 mod models;
-#[path = "../src/printer.rs"]
+#[path = "../src/printer/mod.rs"]
 mod printer;
+#[path = "../src/virtualPrinter/mod.rs"]
+mod virtual_printer;
 
-use models::{Align, Block, BarcodeSymbology, Column, ImageMime, PrintDocument};
+use models::{
+    Align, Block, BarcodeSymbology, Column, ImageMime, PaperWidth, PrintDocument, PrinterTarget,
+};
+use printer::GraphicsBackend;
 
 #[derive(Clone, Default)]
 struct RecordingDriver(Arc<Mutex<Vec<u8>>>);
@@ -35,9 +40,39 @@ impl Driver for RecordingDriver {
 
 #[test]
 fn wraps_text_to_paper_width_without_losing_words() {
-    let lines = printer::wrap_text("one two three four", 9);
+    let lines = printer::text::wrap_text("one two three four", 9);
 
     assert_eq!(lines, vec!["one two", "three", "four"]);
+}
+
+#[test]
+fn feed_uses_esc_d_for_both_paper_widths() {
+    let feed = [0x1B, b'd', 4];
+    for paper_width_mm in [Some(PaperWidth::Mm58), Some(PaperWidth::Mm80)] {
+        let driver = RecordingDriver::default();
+        let bytes = driver.0.clone();
+        printer::render_document(
+            driver,
+            &PrintDocument {
+                paper_width_mm,
+                character_set: None,
+                blocks: vec![
+                    Block::Text {
+                        value: "Hello".into(),
+                        style: None,
+                    },
+                    Block::Feed { lines: Some(4) },
+                ],
+            },
+        )
+        .unwrap();
+
+        let bytes = bytes.lock().unwrap();
+        assert!(
+            bytes.windows(feed.len()).any(|value| value == feed),
+            "feed must send ESC d 4 on {paper_width_mm:?}, got {bytes:?}"
+        );
+    }
 }
 
 #[test]
@@ -79,11 +114,71 @@ fn formats_columns_using_remaining_width_for_first_column() {
     assert!(bytes.windows(24).any(|value| value == b"Coffee                  "));
     assert!(bytes.windows(10).any(|value| value == b"         2"));
     assert!(bytes.windows(14).any(|value| value == b"          4.50"));
+    assert!(
+        bytes.windows(48).any(|value| value
+            == b"Coffee                           2          4.50"),
+        "column row must fill the character line with spaces, got {bytes:?}"
+    );
+    assert!(
+        !bytes.windows(2).any(|value| value == [0x1B, b'$']),
+        "emulator-incompatible ESC $ must not be sent, got {bytes:?}"
+    );
+    assert!(
+        !bytes.windows(2).any(|value| value == [0x1D, b'W']),
+        "emulator-incompatible GS W must not be sent, got {bytes:?}"
+    );
+}
+
+#[test]
+fn wraps_column_text_instead_of_truncating() {
+    let columns = vec![
+        Column {
+            text: "Chocolate croissant with extra butter".into(),
+            width: None,
+            align: None,
+            style: None,
+        },
+        Column {
+            text: "2".into(),
+            width: Some(0.2),
+            align: Some(Align::Right),
+            style: None,
+        },
+        Column {
+            text: "4.50".into(),
+            width: Some(0.3),
+            align: Some(Align::Right),
+            style: None,
+        },
+    ];
+
+    let driver = RecordingDriver::default();
+    let bytes = driver.0.clone();
+    printer::render_document(
+        driver,
+        &PrintDocument {
+            paper_width_mm: None,
+            character_set: None,
+            blocks: vec![Block::Columns { columns }],
+        },
+    )
+    .unwrap();
+
+    let bytes = bytes.lock().unwrap();
+    assert!(
+        bytes.windows(48).any(|value| value
+            == b"Chocolate croissant with         2          4.50"),
+        "first wrapped column row must keep qty and price, got {bytes:?}"
+    );
+    assert!(
+        bytes.windows(12).any(|value| value == b"extra butter"),
+        "overflowing column text must wrap onto the next row, got {bytes:?}"
+    );
 }
 
 #[test]
 fn decodes_data_url_images() {
-    let bytes = printer::decode_image("data:image/png;base64,aGVsbG8=").unwrap();
+    let bytes = printer::render::decode_image("data:image/png;base64,aGVsbG8=").unwrap();
 
     assert_eq!(bytes, b"hello");
 }
@@ -92,7 +187,7 @@ fn decodes_data_url_images() {
 fn raster_image_keeps_following_text_in_the_byte_stream() {
     let driver = RecordingDriver::default();
     let bytes = driver.0.clone();
-    printer::render_document(
+    printer::render::render_with_graphics(
         driver,
         &PrintDocument {
             paper_width_mm: None,
@@ -110,11 +205,17 @@ fn raster_image_keeps_following_text_in_the_byte_stream() {
                 },
             ],
         },
+        GraphicsBackend::Emulator,
     )
     .unwrap();
 
     let bytes = bytes.lock().unwrap();
     let after_raster = skip_gs_v0(&bytes);
+    assert_eq!(
+        after_raster.first().copied(),
+        Some(0x0A),
+        "GS v 0 must be followed by LF so emulators resume text, got {bytes:?}"
+    );
     assert!(
         after_raster.windows(6).any(|value| value == b"HEADER"),
         "text after the logo must stay after GS v 0, got {bytes:?}"
@@ -122,28 +223,49 @@ fn raster_image_keeps_following_text_in_the_byte_stream() {
 }
 
 #[test]
-fn ean13_barcode_uses_native_gs_k_command() {
+fn ean13_barcode_is_raster_and_keeps_following_footer_text() {
     let driver = RecordingDriver::default();
     let bytes = driver.0.clone();
-    printer::render_document(
+    printer::render::render_with_graphics(
         driver,
         &PrintDocument {
             paper_width_mm: None,
             character_set: None,
-            blocks: vec![Block::Barcode {
-                value: "4959920317636".into(),
-                symbology: BarcodeSymbology::Ean13,
-                align: Some(Align::Center),
-                print_value: Some(true),
-            }],
+            blocks: vec![
+                Block::Barcode {
+                    value: "4959920317636".into(),
+                    symbology: BarcodeSymbology::Ean13,
+                    align: Some(Align::Center),
+                    print_value: Some(true),
+                },
+                Block::Text {
+                    value: "Footer sample".into(),
+                    style: None,
+                },
+            ],
         },
+        GraphicsBackend::Emulator,
     )
     .unwrap();
 
     let bytes = bytes.lock().unwrap();
     assert!(
-        bytes.windows(2).any(|value| value == [0x1D, b'k']),
-        "EAN-13 must use native GS k from escpos-rs, got {bytes:?}"
+        !bytes.windows(2).any(|value| value == [0x1D, b'k']),
+        "EAN-13 must not use GS k, got {bytes:?}"
+    );
+    let after_raster = skip_gs_v0(&bytes);
+    assert_eq!(
+        after_raster.first().copied(),
+        Some(0x0A),
+        "barcode raster must be followed by LF so emulators resume text, got {bytes:?}"
+    );
+    assert!(
+        after_raster.windows(13).any(|value| value == b"Footer sample"),
+        "footer must stay after the barcode raster, got {bytes:?}"
+    );
+    assert!(
+        after_raster.windows(13).any(|value| value == b"4959920317636"),
+        "barcode digits must print under the raster, got {bytes:?}"
     );
 }
 
@@ -268,6 +390,100 @@ fn encodes_euro_as_pc858_byte() {
     assert!(
         bytes.windows(5).any(|value| value == [0xD5, b'2', b'.', b'5', b'0']),
         "euro must be PC858 0xD5, got {bytes:?}"
+    );
+}
+
+#[test]
+fn parses_host_and_port_for_network_printers() {
+    assert_eq!(
+        printer::parse_host_port("127.0.0.1:9100"),
+        Some(("127.0.0.1".into(), 9100))
+    );
+    assert_eq!(printer::parse_host_port("127.0.0.1"), None);
+    assert_eq!(printer::parse_host_port(":9100"), None);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn lists_local_network_emulator_in_debug_builds() {
+    let printers = printer::list_printers().expect("listing printers should not fail");
+
+    assert!(printers.iter().any(|printer| printer.path == "127.0.0.1:9100"));
+}
+
+#[test]
+fn hardware_ean13_uses_escpos_gs_k() {
+    let driver = RecordingDriver::default();
+    let bytes = driver.0.clone();
+    printer::render_document(
+        driver,
+        &PrintDocument {
+            paper_width_mm: None,
+            character_set: None,
+            blocks: vec![Block::Barcode {
+                value: "4959920317636".into(),
+                symbology: BarcodeSymbology::Ean13,
+                align: Some(Align::Center),
+                print_value: Some(true),
+            }],
+        },
+    )
+    .unwrap();
+
+    let bytes = bytes.lock().unwrap();
+    assert!(
+        bytes.windows(2).any(|value| value == [0x1D, b'k']),
+        "USB/network printers must use escpos-rs GS k, got {bytes:?}"
+    );
+}
+
+#[test]
+fn hardware_image_uses_escpos_bit_image() {
+    let driver = RecordingDriver::default();
+    let bytes = driver.0.clone();
+    printer::render_document(
+        driver,
+        &PrintDocument {
+            paper_width_mm: None,
+            character_set: None,
+            blocks: vec![Block::Image {
+                data: ONE_PX_PNG.into(),
+                mime: ImageMime::Png,
+                max_width_dots: Some(8),
+                align: Some(Align::Center),
+            }],
+        },
+    )
+    .unwrap();
+
+    let bytes = bytes.lock().unwrap();
+    assert!(
+        bytes.windows(3).any(|value| value == [0x1D, b'v', b'0']),
+        "hardware images must use escpos-rs GS v 0 bit image, got {bytes:?}"
+    );
+}
+
+#[test]
+fn local_emulator_uses_dev_raster_backend() {
+    assert_eq!(
+        printer::graphics_backend_for(&PrinterTarget::Network {
+            host: "127.0.0.1".into(),
+            port: 9100,
+        }),
+        GraphicsBackend::Emulator
+    );
+    assert_eq!(
+        printer::graphics_backend_for(&PrinterTarget::Network {
+            host: "192.168.1.50".into(),
+            port: 9100,
+        }),
+        GraphicsBackend::Escpos
+    );
+    assert_eq!(
+        printer::graphics_backend_for(&PrinterTarget::WindowsUsbByPath {
+            path: r"\\?\usb#vid_1234".into(),
+        }),
+        GraphicsBackend::Escpos
     );
 }
 

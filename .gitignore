@@ -1,3 +1,4 @@
 /target/
 /guest-js/dist/
 /guest-js/node_modules/
+/permissions/schemas/

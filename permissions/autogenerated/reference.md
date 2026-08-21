@@ -7,6 +7,7 @@ Allows listing and testing ESC/POS printers and printing documents.
 - `allow-print`
 - `allow-list-printers`
 - `allow-test-printer`
+- `allow-self-test`
 
 ## Permission Table
 
@@ -65,6 +66,32 @@ Enables the print command without any pre-configured scope.
 <td>
 
 Denies the print command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`escpos:allow-self-test`
+
+</td>
+<td>
+
+Enables the self_test command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`escpos:deny-self-test`
+
+</td>
+<td>
+
+Denies the self_test command without any pre-configured scope.
 
 </td>
 </tr>

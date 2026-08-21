@@ -3,6 +3,9 @@ mod commands;
 mod models;
 #[cfg(feature = "tauri-plugin")]
 mod printer;
+#[cfg(feature = "tauri-plugin")]
+#[path = "virtualPrinter/mod.rs"]
+mod virtual_printer;
 
 #[cfg(feature = "tauri-plugin")]
 use tauri::{
@@ -20,7 +23,8 @@ pub fn init() -> TauriPlugin<Wry> {
         .invoke_handler(tauri::generate_handler![
             commands::print,
             commands::list_printers,
-            commands::test_printer
+            commands::test_printer,
+            commands::self_test
         ])
         .build()
 }

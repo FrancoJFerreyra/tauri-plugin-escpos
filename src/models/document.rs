@@ -1,5 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::EscposError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaperWidth {
     Mm58,
@@ -146,25 +148,7 @@ impl Block {
             Self::Columns { columns } if columns.is_empty() => Err(EscposError::invalid_document(
                 "Columns block must contain at least one column",
             )),
-            Self::Columns { columns } => {
-                let mut total_width = 0.0_f32;
-                for column in columns {
-                    if let Some(width) = column.width {
-                        if !width.is_finite() || width <= 0.0 || width > 1.0 {
-                            return Err(EscposError::invalid_document(
-                                "Column width must be greater than 0 and no greater than 1",
-                            ));
-                        }
-                        total_width += width;
-                    }
-                }
-                if total_width > 1.0 + f32::EPSILON {
-                    return Err(EscposError::invalid_document(
-                        "Column widths must not exceed 1",
-                    ));
-                }
-                Ok(())
-            }
+            Self::Columns { columns } => validate_columns(columns),
             Self::Divider {
                 character: Some(character),
             } if character.chars().count() != 1 => Err(EscposError::invalid_document(
@@ -214,6 +198,26 @@ impl Block {
     }
 }
 
+fn validate_columns(columns: &[Column]) -> Result<(), EscposError> {
+    let mut total_width = 0.0_f32;
+    for column in columns {
+        if let Some(width) = column.width {
+            if !width.is_finite() || width <= 0.0 || width > 1.0 {
+                return Err(EscposError::invalid_document(
+                    "Column width must be greater than 0 and no greater than 1",
+                ));
+            }
+            total_width += width;
+        }
+    }
+    if total_width > 1.0 + f32::EPSILON {
+        return Err(EscposError::invalid_document(
+            "Column widths must not exceed 1",
+        ));
+    }
+    Ok(())
+}
+
 fn is_numeric_length(value: &str, lengths: &[usize]) -> bool {
     lengths.contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
 }
@@ -246,120 +250,3 @@ impl PrintDocument {
         Ok(())
     }
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrinterTarget {
-    WindowsUsbByPath { path: String },
-    WindowsUsbByVidPid { vendor_id: u16, product_id: u16 },
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PrinterTargetWire {
-    kind: PrinterBackend,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    vendor_id: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    product_id: Option<u16>,
-}
-
-impl Serialize for PrinterTarget {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let wire = match self {
-            Self::WindowsUsbByPath { path } => PrinterTargetWire {
-                kind: PrinterBackend::WindowsUsb,
-                path: Some(path.clone()),
-                vendor_id: None,
-                product_id: None,
-            },
-            Self::WindowsUsbByVidPid {
-                vendor_id,
-                product_id,
-            } => PrinterTargetWire {
-                kind: PrinterBackend::WindowsUsb,
-                path: None,
-                vendor_id: Some(*vendor_id),
-                product_id: Some(*product_id),
-            },
-        };
-        wire.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for PrinterTarget {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = PrinterTargetWire::deserialize(deserializer)?;
-        match (wire.path, wire.vendor_id, wire.product_id) {
-            (Some(path), None, None) if !path.is_empty() => Ok(Self::WindowsUsbByPath { path }),
-            (None, Some(vendor_id), Some(product_id)) => Ok(Self::WindowsUsbByVidPid {
-                vendor_id,
-                product_id,
-            }),
-            _ => Err(serde::de::Error::custom(
-                "windows_usb target requires either path or vendorId and productId",
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrinterBackend {
-    WindowsUsb,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrinterInfo {
-    pub id: String,
-    pub path: String,
-    pub name: Option<String>,
-    pub vendor_id: Option<u16>,
-    pub product_id: Option<u16>,
-    pub backend: PrinterBackend,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ErrorCode {
-    UnsupportedPlatform,
-    PrinterNotFound,
-    OpenFailed,
-    InvalidDocument,
-    PrintFailed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct EscposError {
-    pub code: ErrorCode,
-    pub message: String,
-}
-
-impl EscposError {
-    pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
-        }
-    }
-
-    pub fn invalid_document(message: impl Into<String>) -> Self {
-        Self::new(ErrorCode::InvalidDocument, message)
-    }
-}
-
-impl std::fmt::Display for EscposError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.message)
-    }
-}
-
-impl std::error::Error for EscposError {}

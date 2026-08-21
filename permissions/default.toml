@@ -4,4 +4,5 @@ permissions = [
   "allow-print",
   "allow-list-printers",
   "allow-test-printer",
+  "allow-self-test",
 ]

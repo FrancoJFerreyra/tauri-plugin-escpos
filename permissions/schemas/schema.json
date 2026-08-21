@@ -319,6 +319,18 @@
           "markdownDescription": "Denies the print command without any pre-configured scope."
         },
         {
+          "description": "Enables the self_test command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-self-test",
+          "markdownDescription": "Enables the self_test command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the self_test command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-self-test",
+          "markdownDescription": "Denies the self_test command without any pre-configured scope."
+        },
+        {
           "description": "Enables the test_printer command without any pre-configured scope.",
           "type": "string",
           "const": "allow-test-printer",
@@ -331,10 +343,10 @@
           "markdownDescription": "Denies the test_printer command without any pre-configured scope."
         },
         {
-          "description": "Allows listing and testing ESC/POS printers and printing documents.\n#### This default permission set includes:\n\n- `allow-print`\n- `allow-list-printers`\n- `allow-test-printer`",
+          "description": "Allows listing and testing ESC/POS printers and printing documents.\n#### This default permission set includes:\n\n- `allow-print`\n- `allow-list-printers`\n- `allow-test-printer`\n- `allow-self-test`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows listing and testing ESC/POS printers and printing documents.\n#### This default permission set includes:\n\n- `allow-print`\n- `allow-list-printers`\n- `allow-test-printer`"
+          "markdownDescription": "Allows listing and testing ESC/POS printers and printing documents.\n#### This default permission set includes:\n\n- `allow-print`\n- `allow-list-printers`\n- `allow-test-printer`\n- `allow-self-test`"
         }
       ]
     }
