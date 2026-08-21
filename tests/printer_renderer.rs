@@ -12,7 +12,8 @@ mod printer;
 mod virtual_printer;
 
 use models::{
-    Align, Block, BarcodeSymbology, Column, ImageMime, PaperWidth, PrintDocument, PrinterTarget,
+    Align, Block, BarcodeSymbology, Column, FontSize, ImageMime, PaperWidth, PrintDocument,
+    PrinterTarget, TextStyle,
 };
 use printer::GraphicsBackend;
 
@@ -76,6 +77,60 @@ fn feed_uses_esc_d_for_both_paper_widths() {
 }
 
 #[test]
+fn text_font_size_double_selects_escpos_character_size() {
+    let driver = RecordingDriver::default();
+    let bytes = driver.0.clone();
+    printer::render_document(
+        driver,
+        &PrintDocument {
+            paper_width_mm: None,
+            character_set: None,
+            blocks: vec![Block::Text {
+                value: "Hi".into(),
+                style: Some(TextStyle {
+                    size: Some(FontSize::Double),
+                    ..TextStyle::default()
+                }),
+            }],
+        },
+    )
+    .unwrap();
+
+    let bytes = bytes.lock().unwrap();
+    assert!(
+        bytes.windows(3).any(|value| value == [0x1D, b'!', 0x11]),
+        "size double must send GS ! 0x11, got {bytes:?}"
+    );
+}
+
+#[test]
+fn text_font_size_small_selects_font_b() {
+    let driver = RecordingDriver::default();
+    let bytes = driver.0.clone();
+    printer::render_document(
+        driver,
+        &PrintDocument {
+            paper_width_mm: None,
+            character_set: None,
+            blocks: vec![Block::Text {
+                value: "Hi".into(),
+                style: Some(TextStyle {
+                    size: Some(FontSize::Small),
+                    ..TextStyle::default()
+                }),
+            }],
+        },
+    )
+    .unwrap();
+
+    let bytes = bytes.lock().unwrap();
+    assert!(
+        bytes.windows(3).any(|value| value == [0x1B, b'M', 1]),
+        "size small must send ESC M Font B, got {bytes:?}"
+    );
+}
+
+#[test]
 fn formats_columns_using_remaining_width_for_first_column() {
     let columns = vec![
         Column {
@@ -105,7 +160,9 @@ fn formats_columns_using_remaining_width_for_first_column() {
         &PrintDocument {
             paper_width_mm: None,
             character_set: None,
-            blocks: vec![Block::Columns { columns }],
+            blocks: vec![Block::Columns {
+                columns,
+            }],
         },
     )
     .unwrap();
@@ -159,7 +216,9 @@ fn wraps_column_text_instead_of_truncating() {
         &PrintDocument {
             paper_width_mm: None,
             character_set: None,
-            blocks: vec![Block::Columns { columns }],
+            blocks: vec![Block::Columns {
+                columns,
+            }],
         },
     )
     .unwrap();

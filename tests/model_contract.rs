@@ -85,3 +85,34 @@ fn deserializes_network_printer_target() {
         }
     );
 }
+
+#[test]
+fn deserializes_text_style_size_including_small() {
+    let wide: Block = serde_json::from_value(serde_json::json!({
+        "type": "text",
+        "value": "Hello",
+        "style": { "size": "wide" }
+    }))
+    .unwrap();
+    let small: Block = serde_json::from_value(serde_json::json!({
+        "type": "text",
+        "value": "Hello",
+        "style": { "size": "small" }
+    }))
+    .unwrap();
+
+    assert!(matches!(
+        wide,
+        Block::Text {
+            style: Some(style),
+            ..
+        } if style.size == Some(tauri_plugin_escpos::FontSize::Wide)
+    ));
+    assert!(matches!(
+        small,
+        Block::Text {
+            style: Some(style),
+            ..
+        } if style.size == Some(tauri_plugin_escpos::FontSize::Small)
+    ));
+}
