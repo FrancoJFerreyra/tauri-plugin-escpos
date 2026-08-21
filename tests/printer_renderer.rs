@@ -8,8 +8,12 @@ use escpos::driver::Driver;
 mod models;
 #[path = "../src/printer/mod.rs"]
 mod printer;
+#[path = "../src/virtualPrinter/mod.rs"]
+mod virtual_printer;
 
-use models::{Align, Block, BarcodeSymbology, Column, ImageMime, PrintDocument, PrinterTarget};
+use models::{
+    Align, Block, BarcodeSymbology, Column, ImageMime, PaperWidth, PrintDocument, PrinterTarget,
+};
 use printer::GraphicsBackend;
 
 #[derive(Clone, Default)]
@@ -39,6 +43,36 @@ fn wraps_text_to_paper_width_without_losing_words() {
     let lines = printer::text::wrap_text("one two three four", 9);
 
     assert_eq!(lines, vec!["one two", "three", "four"]);
+}
+
+#[test]
+fn feed_uses_esc_d_for_both_paper_widths() {
+    let feed = [0x1B, b'd', 4];
+    for paper_width_mm in [Some(PaperWidth::Mm58), Some(PaperWidth::Mm80)] {
+        let driver = RecordingDriver::default();
+        let bytes = driver.0.clone();
+        printer::render_document(
+            driver,
+            &PrintDocument {
+                paper_width_mm,
+                character_set: None,
+                blocks: vec![
+                    Block::Text {
+                        value: "Hello".into(),
+                        style: None,
+                    },
+                    Block::Feed { lines: Some(4) },
+                ],
+            },
+        )
+        .unwrap();
+
+        let bytes = bytes.lock().unwrap();
+        assert!(
+            bytes.windows(feed.len()).any(|value| value == feed),
+            "feed must send ESC d 4 on {paper_width_mm:?}, got {bytes:?}"
+        );
+    }
 }
 
 #[test]

@@ -10,11 +10,11 @@ use escpos::{
     },
 };
 
-use super::barcode;
-use super::raster;
+use crate::virtual_printer::barcode;
+use crate::virtual_printer::raster;
 use super::text::{
     apply_font_style, apply_style, column_rows, horizontal_scale, reset_style, set_alignment,
-    wrap_text, write_line_feed, write_line_feeds, writeln_encoded,
+    wrap_text, write_line_feed, writeln_encoded,
 };
 use super::{invalid_document_error, print_error, GraphicsBackend};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -59,7 +59,10 @@ fn render_block<D: Driver>(
             }
         }
         Block::Feed { lines } => {
-            write_line_feeds(printer, lines.unwrap_or(1))?;
+            reset_style(printer)?;
+            printer
+                .feeds(lines.unwrap_or(1))
+                .map_err(print_error)?;
         }
         Block::Divider { character } => {
             reset_style(printer)?;

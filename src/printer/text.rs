@@ -16,16 +16,6 @@ fn write_encoded<D: Driver>(printer: &mut Printer<D>, text: &str) -> Result<(), 
     Ok(())
 }
 
-pub(super) fn write_line_feeds<D: Driver>(
-    printer: &mut Printer<D>,
-    lines: u8,
-) -> Result<(), EscposError> {
-    for _ in 0..lines {
-        write_line_feed(printer)?;
-    }
-    Ok(())
-}
-
 pub(super) fn write_line_feed<D: Driver>(printer: &mut Printer<D>) -> Result<(), EscposError> {
     printer.custom(&[0x0A]).map_err(print_error)?;
     Ok(())

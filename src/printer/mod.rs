@@ -7,10 +7,6 @@ use escpos::driver::{Driver, NetworkDriver};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-#[path = "../barcode.rs"]
-mod barcode;
-#[path = "../raster.rs"]
-mod raster;
 pub(crate) mod render;
 pub(crate) mod text;
 
@@ -44,7 +40,7 @@ pub fn print_document(
                         format!("Failed to open Windows USB printer: {error}"),
                     )
                 })?;
-                render_with_graphics(driver, document, GraphicsBackend::Escpos)
+                render_document(driver, document)
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -68,7 +64,7 @@ pub fn print_document(
                             ),
                         )
                     })?;
-                render_with_graphics(driver, document, GraphicsBackend::Escpos)
+                render_document(driver, document)
             }
             #[cfg(not(target_os = "windows"))]
             {
