@@ -1,5 +1,5 @@
 use crate::models::{Align, Column, EscposError, FontSize, TextStyle};
-use escpos::{driver::Driver, printer::Printer, utils::{JustifyMode, UnderlineMode}};
+use escpos::{driver::Driver, printer::Printer, utils::{Font, JustifyMode, UnderlineMode}};
 
 use super::print_error;
 
@@ -85,8 +85,13 @@ pub(super) fn apply_font_style<D: Driver>(
     style: Option<&TextStyle>,
 ) -> Result<(), EscposError> {
     let (width, height) = font_dots(style.and_then(|style| style.size));
+    let font = match style.and_then(|style| style.size) {
+        Some(FontSize::Small) => Font::B,
+        _ => Font::A,
+    };
     printer
-        .bold(style.and_then(|style| style.bold).unwrap_or(false))
+        .font(font)
+        .and_then(|printer| printer.bold(style.and_then(|style| style.bold).unwrap_or(false)))
         .and_then(|printer| {
             printer.underline(if style.and_then(|style| style.underline).unwrap_or(false) {
                 UnderlineMode::Single
@@ -101,7 +106,7 @@ pub(super) fn apply_font_style<D: Driver>(
 
 fn font_dots(size: Option<FontSize>) -> (u8, u8) {
     match size.unwrap_or(FontSize::Normal) {
-        FontSize::Normal => (1, 1),
+        FontSize::Small | FontSize::Normal => (1, 1),
         FontSize::Wide => (2, 1),
         FontSize::Tall => (1, 2),
         FontSize::Double => (2, 2),
@@ -110,7 +115,8 @@ fn font_dots(size: Option<FontSize>) -> (u8, u8) {
 
 pub(super) fn reset_style<D: Driver>(printer: &mut Printer<D>) -> Result<(), EscposError> {
     printer
-        .bold(false)
+        .font(Font::A)
+        .and_then(|printer| printer.bold(false))
         .and_then(|printer| printer.underline(UnderlineMode::None))
         .and_then(|printer| printer.size(1, 1))
         .and_then(|printer| printer.justify(JustifyMode::LEFT))
@@ -136,6 +142,14 @@ pub(super) fn horizontal_scale(style: Option<&TextStyle>) -> usize {
         Some(FontSize::Wide | FontSize::Double) => 2,
         _ => 1,
     }
+}
+
+pub(super) fn characters_per_line(base: usize, style: Option<&TextStyle>) -> usize {
+    let columns = match style.and_then(|style| style.size) {
+        Some(FontSize::Small) => base * 4 / 3,
+        _ => base,
+    };
+    (columns / horizontal_scale(style)).max(1)
 }
 
 pub(crate) fn wrap_text(value: &str, width: usize) -> Vec<String> {

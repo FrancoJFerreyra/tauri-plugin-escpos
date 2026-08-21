@@ -13,7 +13,7 @@ use escpos::{
 use crate::virtual_printer::barcode;
 use crate::virtual_printer::raster;
 use super::text::{
-    apply_font_style, apply_style, column_rows, horizontal_scale, reset_style, set_alignment,
+    apply_font_style, apply_style, characters_per_line, column_rows, reset_style, set_alignment,
     wrap_text, write_line_feed, writeln_encoded,
 };
 use super::{invalid_document_error, print_error, GraphicsBackend};
@@ -53,7 +53,7 @@ fn render_block<D: Driver>(
     match block {
         Block::Text { value, style } => {
             apply_style(printer, style.as_ref())?;
-            let width = line_width / horizontal_scale(style.as_ref());
+            let width = characters_per_line(line_width, style.as_ref());
             for line in wrap_text(value, width) {
                 writeln_encoded(printer, &line)?;
             }
@@ -150,9 +150,11 @@ fn render_columns<D: Driver>(
     columns: &[Column],
     line_width: usize,
 ) -> Result<(), EscposError> {
+    let style = columns.first().and_then(|column| column.style.as_ref());
     reset_style(printer)?;
-    apply_font_style(printer, columns.first().and_then(|column| column.style.as_ref()))?;
-    for line in column_rows(columns, line_width) {
+    apply_font_style(printer, style)?;
+    let width = characters_per_line(line_width, style);
+    for line in column_rows(columns, width) {
         writeln_encoded(printer, &line)?;
     }
     Ok(())

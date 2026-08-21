@@ -61,6 +61,7 @@ pub enum Align {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FontSize {
+    Small,
     Normal,
     Wide,
     Tall,

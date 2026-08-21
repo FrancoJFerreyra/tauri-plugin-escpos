@@ -105,7 +105,7 @@ cut command automatically.
 
 ## Blocks
 
-- `text`: wrapped text with alignment, bold, underline, and normal/wide/tall/double size.
+- `text`: wrapped text with alignment, bold, underline, and small/normal/wide/tall/double size.
 - `columns`: fixed-width receipt rows. The first column defaults to left alignment and the others
   to right alignment.
 - `divider`: repeats one character across the paper width.
